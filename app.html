@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DepositProof - the paper trail that gets your deposit back</title>
+<style>
+  :root { --ink:#20262b; --muted:#6e7982; --accent:#3d5a80; --accent-dk:#2d4563; --card:#ffffff; --bg:#f3f6f9; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width:680px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .tag { color:var(--muted); margin:0 0 20px; line-height:1.45; }
+  .card { background:var(--card); border:1px solid #dde5ec; border-radius:14px; padding:18px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.04); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  input, select, textarea { padding:9px 10px; border:1px solid #ccd6df; border-radius:8px; font-size:15px; background:#fff; font-family:inherit; }
+  input[type=text] { width:190px; }
+  input[type=date] { width:160px; }
+  input[type=number] { width:90px; }
+  textarea { width:100%; min-height:56px; resize:vertical; }
+  button { padding:10px 16px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; cursor:pointer; }
+  button:hover { background:var(--accent-dk); }
+  button.ghost { background:#e8eef4; color:var(--ink); }
+  button.ghost:hover { background:#d8e2ec; }
+  .pill { display:inline-block; padding:4px 14px; border-radius:999px; font-size:13px; font-weight:700; }
+  .pill.safe { background:#e2f0e6; color:#2f6f45; }
+  .pill.closing { background:#f6ecd2; color:#8a6a14; }
+  .pill.late { background:#f6e0dd; color:#8f3a33; }
+  .deadline { text-align:center; }
+  .deadline .big { font-size:30px; font-weight:700; margin:8px 0 2px; }
+  .deadline .sub { color:var(--muted); font-size:14px; }
+  .bar { height:8px; background:#e8eef4; border-radius:99px; overflow:hidden; margin:10px 0 4px; }
+  .bar i { display:block; height:100%; background:var(--accent); border-radius:99px; }
+  .room { border:1px solid #dde5ec; border-radius:10px; padding:14px; margin-bottom:10px; }
+  .room .top { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px; }
+  .room .name { font-weight:700; font-size:16px; }
+  .room .logged { color:var(--muted); font-size:12px; margin-top:6px; }
+  .rep { white-space:pre-wrap; font-family:ui-monospace, Menlo, monospace; font-size:12.5px; background:#f8fafc; border:1px solid #dde5ec; border-radius:10px; padding:14px; line-height:1.55; max-height:340px; overflow:auto; }
+  .copied { color:#2f6f45; font-size:13px; margin-left:8px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DepositProof</h1>
+  <p class="tag">Security deposits come back when the evidence is boring and dated. Log each room's condition as you move out, and DepositProof turns it into a landlord-ready report with the return deadline counting down.</p>
+
+  <div class="card">
+    <div class="row">
+      <div><label for="tenant">Your name</label><input type="text" id="tenant" placeholder="Dana Levy"></div>
+      <div><label for="addr">Property</label><input type="text" id="addr" placeholder="12 Oak St #3"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label for="moveout">Move-out date</label><input type="date" id="moveout"></div>
+      <div><label for="jdays">Deposit return window (days)</label><input type="number" id="jdays" value="30" min="1" max="90"></div>
+      <button id="saveSetup">Save</button>
+    </div>
+  </div>
+
+  <div class="card deadline hidden" id="deadlineCard">
+    <span class="pill safe" id="dlPill">on the clock</span>
+    <div class="big" id="dlDays">30 days</div>
+    <div class="sub" id="dlSub">until your deposit is legally due back</div>
+    <div class="bar"><i id="barFill" style="width:0%"></i></div>
+    <div class="sub"><span id="doneN">0</span> of <span id="totN">7</span> areas logged</div>
+  </div>
+
+  <div id="rooms"></div>
+
+  <div class="card">
+    <button id="genBtn">Generate move-out report</button>
+    <span id="copied"></span>
+    <div class="rep hidden" id="rep" style="margin-top:12px"></div>
+  </div>
+</div>
+<script src="engine.js"></script>
+<script>
+(function(){
+  var E = DepositProofEngine;
+  var KEY = 'depositproof.v1';
+  var st = {tenant:'', addr:'', moveout:'', jdays:30, rooms:E.DEFAULT_ROOMS.map(function(n){ return {name:n, status:'good', note:'', loggedMs:null}; })};
+  try { var s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && s.rooms) st = s; } catch(e){}
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(st)); } catch(e){} }
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  function moveoutMs(){
+    if (!st.moveout) return null;
+    var d = new Date(st.moveout + 'T12:00:00');
+    return isNaN(d) ? null : d.getTime();
+  }
+
+  function render(){
+    $('tenant').value = st.tenant; $('addr').value = st.addr;
+    $('moveout').value = st.moveout; $('jdays').value = st.jdays;
+    var mo = moveoutMs();
+    var now = Date.now();
+    var c = E.completion(st.rooms);
+    $('doneN').textContent = c.done; $('totN').textContent = c.total;
+    $('barFill').style.width = c.pct + '%';
+    if (mo){
+      $('deadlineCard').classList.remove('hidden');
+      var dl = E.returnDeadlineMs(mo, parseInt(st.jdays,10) || 30);
+      var u = E.urgency(now, dl);
+      $('dlPill').className = 'pill ' + u.key;
+      $('dlPill').textContent = u.label;
+      $('dlDays').textContent = u.days < 0 ? Math.abs(u.days) + (u.days === -1 ? ' day' : ' days') + ' late' : u.days + (u.days === 1 ? ' day' : ' days');
+      $('dlSub').textContent = u.days < 0 ? 'past the return deadline (' + E.fmtDate(dl) + ') - send the report' : 'until your deposit is due back (' + E.fmtDate(dl) + ')';
+    } else {
+      $('deadlineCard').classList.add('hidden');
+    }
+    var html = '';
+    st.rooms.forEach(function(r, i){
+      html += '<div class="room" data-i="' + i + '">' +
+        '<div class="top"><span class="name">' + esc(r.name) + '</span>' +
+        '<select data-f="status">' +
+          '<option value="good"' + (r.status==='good'?' selected':'') + '>good</option>' +
+          '<option value="fair"' + (r.status==='fair'?' selected':'') + '>fair / wear</option>' +
+          '<option value="damage"' + (r.status==='damage'?' selected':'') + '>damage noted</option>' +
+        '</select></div>' +
+        '<textarea data-f="note" placeholder="Condition notes - be specific and boring">' + esc(r.note) + '</textarea>' +
+        (r.loggedMs ? '<div class="logged">Logged ' + E.fmtDate(r.loggedMs) + '</div>' : '') +
+      '</div>';
+    });
+    $('rooms').innerHTML = html;
+  }
+
+  $('saveSetup').addEventListener('click', function(){
+    st.tenant = $('tenant').value.trim();
+    st.addr = $('addr').value.trim();
+    st.moveout = $('moveout').value;
+    st.jdays = parseInt($('jdays').value, 10) || 30;
+    save(); render();
+  });
+
+  $('rooms').addEventListener('change', function(ev){
+    var box = ev.target.closest('.room'); if (!box) return;
+    var i = parseInt(box.getAttribute('data-i'), 10);
+    var f = ev.target.getAttribute('data-f');
+    if (f === 'status') st.rooms[i].status = ev.target.value;
+    if (f === 'note') { st.rooms[i].note = ev.target.value; if (ev.target.value.trim() && !st.rooms[i].loggedMs) st.rooms[i].loggedMs = Date.now(); if (!ev.target.value.trim()) st.rooms[i].loggedMs = null; }
+    save(); render();
+  });
+
+  $('genBtn').addEventListener('click', function(){
+    var mo = moveoutMs() || Date.now();
+    var text = E.report(st.tenant || '(tenant)', st.addr || '(property)', mo, parseInt(st.jdays,10) || 30, st.rooms, Date.now());
+    var rep = $('rep');
+    rep.textContent = text;
+    rep.classList.remove('hidden');
+    if (navigator.clipboard){
+      navigator.clipboard.writeText(text);
+      $('copied').innerHTML = '<span class="copied">report copied</span>';
+      setTimeout(function(){ $('copied').innerHTML=''; }, 2000);
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
