@@ -138,9 +138,22 @@
     var box = ev.target.closest('.room'); if (!box) return;
     var i = parseInt(box.getAttribute('data-i'), 10);
     var f = ev.target.getAttribute('data-f');
-    if (f === 'status') st.rooms[i].status = ev.target.value;
-    if (f === 'note') { st.rooms[i].note = ev.target.value; if (ev.target.value.trim() && !st.rooms[i].loggedMs) st.rooms[i].loggedMs = Date.now(); if (!ev.target.value.trim()) st.rooms[i].loggedMs = null; }
-    save(); render();
+    if (f === 'status') { st.rooms[i].status = ev.target.value; save(); return; }
+    if (f === 'note') {
+      var v = ev.target.value;
+      st.rooms[i].note = v;
+      if (v.trim() && !st.rooms[i].loggedMs) st.rooms[i].loggedMs = Date.now();
+      if (!v.trim()) st.rooms[i].loggedMs = null;
+      save();
+      var c = E.completion(st.rooms);
+      $('doneN').textContent = c.done;
+      $('barFill').style.width = c.pct + '%';
+      var lg = box.querySelector('.logged');
+      if (st.rooms[i].loggedMs) {
+        if (!lg) { lg = document.createElement('div'); lg.className = 'logged'; box.appendChild(lg); }
+        lg.textContent = 'Logged ' + E.fmtDate(st.rooms[i].loggedMs);
+      } else if (lg) { lg.remove(); }
+    }
   });
 
   $('genBtn').addEventListener('click', function(){
